@@ -1,0 +1,109 @@
+import os
+import csv
+import time
+import shutil
+import zipfile
+from datetime import datetime
+from flask import Flask, request, render_template, send_file
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+import pyautogui
+
+# Flask configuration
+app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+SCREENSHOT_DIR = os.path.join(BASE_DIR, 'Screenshot_folder')
+ZIP_OUTPUT_PATH = os.path.join(BASE_DIR, 'Screenshots_folder.zip')
+CHROME_DRIVER_PATH = os.path.join(BASE_DIR, "chromedriver.exe")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+
+# Initialize WebDriver
+def initialize_driver():
+    chrome_service = Service(executable_path=CHROME_DRIVER_PATH)
+    chrome_options = Options()
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--disable-infobars")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option("useAutomationExtension", False)
+    return webdriver.Chrome(service=chrome_service, options=chrome_options)
+
+# Take screenshots and save in organized folders
+def take_full_screenshot(app_name, step_name):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_path = os.path.join(SCREENSHOT_DIR, app_name)
+    os.makedirs(save_path, exist_ok=True)
+    filename = os.path.join(save_path, f"{step_name}_{timestamp}.png")
+    screenshot = pyautogui.screenshot()
+    screenshot.save(filename)
+    print(f"Screenshot saved: {filename}")
+
+# Automation process with detailed steps and screenshots
+def load_urls_and_automate(csv_file_path):
+    driver = initialize_driver()
+    with open(csv_file_path, mode='r', newline='', encoding='utf-8') as file:
+        csv_reader = csv.DictReader(file)
+        for row in csv_reader:
+            app_name = row['app_name']
+            url = row['url']
+            print(f"Processing {app_name}: {url}")
+            
+            # Open URL
+            driver.get(url)
+            time.sleep(5)
+            take_full_screenshot(app_name, "First_page_load")
+
+            # Example Step 1: Microsoft Sign-in Process
+            try:
+                email_input = driver.find_element(By.ID, "i0116")
+                email_input.send_keys("test@example.com")  # Replace with appropriate email
+                take_full_screenshot(app_name, "Email_filled")
+                email_input.send_keys(Keys.RETURN)
+                time.sleep(8)
+            except Exception as e:
+                print(f"Sign-in page not found for {app_name}, skipping step.")
+
+            # Example Step 2: Handle a second page (if applicable)
+            try:
+                second_page = driver.find_element(By.XPATH, "//*[@id='identifierInput']")
+                second_page.send_keys("test@example.com")  # Replace with appropriate data
+                take_full_screenshot(app_name, "Second_page_filled")
+                second_page.send_keys(Keys.RETURN)
+                time.sleep(8)
+            except Exception:
+                print(f"Second page not found for {app_name}, skipping step.")
+
+            # Add similar steps as per your original code logic
+        driver.quit()
+
+# Zip the screenshots folder for download
+def zip_folder(folder_path, output_path):
+    shutil.make_archive(output_path.replace('.zip', ''), 'zip', folder_path)
+
+# Flask routes
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/upload', methods=['POST'])
+def upload_files():
+    urls_file = request.files.get('urls_csv')
+    if urls_file:
+        urls_file.save(os.path.join(UPLOAD_FOLDER, 'urls.csv'))
+    return "Files uploaded successfully. Start the automation!"
+
+@app.route('/start', methods=['POST'])
+def start_automation():
+    urls_csv_path = os.path.join(UPLOAD_FOLDER, 'urls.csv')
+    if not os.path.exists(urls_csv_path):
+        return "No URLs CSV file uploaded."
+    load_urls_and_automate(urls_csv_path)
+    zip_folder(SCREENSHOT_DIR, ZIP_OUTPUT_PATH)
+    return send_file(ZIP_OUTPUT_PATH, as_attachment=True)
+
+if __name__ == "__main__":
+    app.run(debug=True)
